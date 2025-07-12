@@ -391,12 +391,16 @@ async def process_student_syllabus(
         if not contents:
             raise HTTPException(status_code=400, detail="Empty file")
         
-        # Extract text from PDF
+        # Extract text from PDF with better processing
         text = ""
         try:
             pdf_reader = PyPDF2.PdfReader(io.BytesIO(contents))
-            for page in pdf_reader.pages:
-                text += page.extract_text()
+            for page_num, page in enumerate(pdf_reader.pages):
+                page_text = page.extract_text()
+                # Clean up the text
+                page_text = ' '.join(page_text.split())  # Normalize whitespace
+                text += page_text + "\n"
+                print(f"DEBUG: Page {page_num + 1} extracted {len(page_text)} chars")
         except Exception as e:
             print(f"DEBUG: PDF extraction error: {e}")
             raise HTTPException(status_code=400, detail="Failed to extract text from PDF")
@@ -462,25 +466,31 @@ async def parse_syllabus_with_openai(text: str) -> List[CourseEventCreate]:
         
         client = openai.OpenAI(api_key=openai_api_key)
         
-        # Create prompt for OpenAI
+        # Create enhanced prompt for OpenAI GPT-4o-mini
         prompt = f"""
-        Parse this syllabus and extract all events (exams, assignments, projects, etc.) with dates.
+        You are an expert at parsing academic syllabi. Extract all important events with dates from this syllabus.
         
-        Return a JSON array of events, each with:
-        - title: string
-        - date: ISO date string (YYYY-MM-DD)
-        - category: one of "Exam", "Quiz", "HW", "Project", "Presentation", "Class", "Other"
-        - location: string or None
+        Return ONLY a valid JSON array of events. Each event should have:
+        - "title": descriptive name of the event
+        - "date": ISO date string (YYYY-MM-DD) - if year is missing, assume 2025
+        - "category": one of "Exam", "Quiz", "HW", "Project", "Presentation", "Class", "Other"
+        - "location": room/building or null if not specified
+        
+        Example format:
+        [
+          {{"title": "Midterm Exam", "date": "2025-03-15", "category": "Exam", "location": "Room 101"}},
+          {{"title": "Assignment 1 Due", "date": "2025-02-20", "category": "HW", "location": null}}
+        ]
         
         Syllabus text:
-        {text[:4000]}  # Limit text to avoid token limits
+        {text[:6000]}  # Increased limit for GPT-4o-mini
         """
         
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
-            max_tokens=1000
+            max_tokens=2000
         )
         
         # Parse response
